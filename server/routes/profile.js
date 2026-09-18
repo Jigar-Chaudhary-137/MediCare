@@ -1,39 +1,76 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
+const User = require('../models/User');
+const Profile = require('../models/Profile');
 const authMiddleware = require('../middleware/auth');
 
 router.use(authMiddleware);
 
 // Get profile
-router.get('/', (req, res) => {
-  const user = db.users.findById(req.user.id);
-  const profile = db.profile.findByUserId(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
+router.get('/', async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const user = await User.findById(userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
-  // Remove password from response
-  const { password, ...safeUser } = user;
-  res.json({ ...safeUser, ...(profile || {}) });
+    const profile = await Profile.findOne({ user_id: user._id });
+    const userObj = user.toObject();
+    const profileObj = profile ? profile.toObject() : {};
+
+    res.json({
+      ...userObj,
+      ...profileObj,
+      id: user._id.toString()
+    });
+  } catch (err) {
+    console.error('Get profile error:', err);
+    res.status(500).json({ error: 'Failed to retrieve profile' });
+  }
 });
 
 // Update profile
-router.put('/', (req, res) => {
-  const { name, dob, gender, blood_group, height, weight, allergies, emergency_contact, profile_picture } = req.body;
+router.put('/', async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const {
+      name,
+      dob,
+      gender,
+      blood_group,
+      height,
+      weight,
+      allergies,
+      emergency_contact,
+      profile_picture
+    } = req.body;
 
-  if (name) db.updateUserName(req.user.id, name);
+    if (name) {
+      await User.findByIdAndUpdate(userId, { name: name.trim() });
+    }
 
-  db.profile.update(req.user.id, {
-    dob: dob || null,
-    gender: gender || null,
-    blood_group: blood_group || null,
-    height: height || null,
-    weight: weight || null,
-    allergies: allergies || null,
-    emergency_contact: emergency_contact || null,
-    profile_picture: profile_picture || undefined
-  });
+    const profileUpdates = {};
+    if (dob !== undefined) profileUpdates.dob = dob || null;
+    if (gender !== undefined) profileUpdates.gender = gender || null;
+    if (blood_group !== undefined) profileUpdates.blood_group = blood_group || null;
+    if (height !== undefined) profileUpdates.height = height || null;
+    if (weight !== undefined) profileUpdates.weight = weight || null;
+    if (allergies !== undefined) profileUpdates.allergies = allergies || null;
+    if (emergency_contact !== undefined) profileUpdates.emergency_contact = emergency_contact || null;
+    if (profile_picture !== undefined) profileUpdates.profile_picture = profile_picture;
 
-  res.json({ success: true });
+    await Profile.findOneAndUpdate(
+      { user_id: userId },
+      { $set: profileUpdates },
+      { upsert: true, new: true }
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update profile error:', err);
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
 });
 
 module.exports = router;
